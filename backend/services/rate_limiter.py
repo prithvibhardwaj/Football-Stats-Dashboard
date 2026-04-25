@@ -83,18 +83,23 @@ class DailyAPIRateLimiter:
         if current_value == 1:
             await self.cache.expire(key, self._seconds_until_reset())
 
-        remaining = max(0, self.limit - current_value)
-        status = RateLimitStatus(
-            allowed=current_value <= self.limit,
-            used=current_value,
-            remaining=remaining,
-            reset_at=self._reset_at(),
-        )
-
-        if not status.allowed:
+        if current_value > self.limit:
+            await self.cache.decrement(key)
             raise HTTPException(
                 status_code=429,
                 detail="Daily API limit reached",
             )
 
-        return status
+        remaining = max(0, self.limit - current_value)
+        return RateLimitStatus(
+            allowed=True,
+            used=current_value,
+            remaining=remaining,
+            reset_at=self._reset_at(),
+        )
+
+    async def release(self) -> None:
+        if self.cache.client is None:
+            return
+        key = self._key()
+        await self.cache.decrement(key)

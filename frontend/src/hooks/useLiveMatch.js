@@ -161,7 +161,7 @@ export function useLiveMatch(fixtureId) {
     }
 
     fetchLiveMatch();
-    const intervalId = window.setInterval(fetchLiveMatch, 30000);
+    const intervalId = window.setInterval(fetchLiveMatch, 60000);
 
     return () => {
       cancelled = true;

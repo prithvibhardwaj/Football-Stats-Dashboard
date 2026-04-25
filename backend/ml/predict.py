@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ml.features import build_prediction_features
+from ml.features import get_fixture_context
 from ml.poisson_model import DEFAULT_ARTIFACT, predict_outcome
 from services.api_football import APIFootballService
 from services.cache import RedisCache
@@ -48,8 +48,7 @@ def _artifact_payload(artifact_blob: str | None) -> dict[str, Any]:
 
 def _prediction_window(status: str, kickoff_at: datetime | None) -> datetime | None:
     now = datetime.now(timezone.utc)
-    normalized_status = status.upper()
-    if normalized_status == "HT":
+    if status.upper() == "HT":
         return now + timedelta(hours=1)
     if kickoff_at is None:
         return now + timedelta(hours=1)
@@ -64,42 +63,37 @@ async def generate_prediction(
     cache: RedisCache,
     db: Session,
 ) -> dict[str, Any]:
-    fixture_payload = await service.get_fixture(fixture_id)
-    fixture_response = fixture_payload.get("response", [])
-    if not fixture_response:
-        raise HTTPException(status_code=404, detail="Fixture not found")
-
-    fixture = fixture_response[0]
-    fixture_info = fixture.get("fixture", {})
-    league = fixture.get("league", {})
-    teams = fixture.get("teams", {})
-    goals = fixture.get("goals", {})
-    status = str(fixture_info.get("status", {}).get("short", "NS"))
-    kickoff_at = _parse_datetime(fixture_info.get("date"))
     now = datetime.now(timezone.utc)
-    kickoff_utc = kickoff_at if kickoff_at and kickoff_at.tzinfo else kickoff_at.replace(tzinfo=timezone.utc) if kickoff_at else None
 
+    # 1. Redis cache
     cached = await cache.get_json(_fixture_cache_key(fixture_id)) if cache.client is not None else None
     if cached is not None:
         valid_until = _parse_datetime(cached.get("valid_until"))
         if valid_until and valid_until > now:
-          return cached
+            return cached
 
-    if kickoff_utc and kickoff_utc <= now and status.upper() != "HT":
-        raise HTTPException(
-            status_code=409,
-            detail="Predictions are only available before kick-off or at half-time",
-        )
-
+    # 2. DB cache — costs 0 API calls
     existing_prediction = get_latest_prediction(db, fixture_id)
     if existing_prediction and existing_prediction.valid_until:
         existing_valid_until = existing_prediction.valid_until
         existing_valid_utc = existing_valid_until if existing_valid_until.tzinfo else existing_valid_until.replace(tzinfo=timezone.utc)
         if existing_valid_utc > now:
+            match_record = existing_prediction.match
+            home_name = match_record.home_team_name if match_record else "Home"
+            away_name = match_record.away_team_name if match_record else "Away"
+            raw_output = existing_prediction.raw_output or {}
+            most_likely = raw_output.get(
+                "most_likely_scoreline",
+                f"{round(existing_prediction.predicted_home_goals)}-{round(existing_prediction.predicted_away_goals)}",
+            )
+            parts = most_likely.split("-")
+            scoreline = f"{home_name} {parts[0]} - {parts[1]} {away_name}" if len(parts) == 2 else most_likely
             return {
                 "fixture_id": fixture_id,
+                "home_team": home_name,
+                "away_team": away_name,
                 "predicted_score": f"{existing_prediction.predicted_home_goals:.2f}-{existing_prediction.predicted_away_goals:.2f}",
-                "scoreline": f"{existing_prediction.predicted_home_goals:.2f}-{existing_prediction.predicted_away_goals:.2f}",
+                "scoreline": scoreline,
                 "home_win_probability": existing_prediction.home_win_probability,
                 "draw_probability": existing_prediction.draw_probability,
                 "away_win_probability": existing_prediction.away_win_probability,
@@ -110,24 +104,39 @@ async def generate_prediction(
                 "model_version": existing_prediction.model_version,
                 "features": existing_prediction.feature_payload,
                 "warnings": [
-                    warning
-                    for warning in [
-                        "Key player absent" if (existing_prediction.key_player_availability_score or 1) < 0.7 else None
-                    ]
-                    if warning
+                    w for w in [
+                        "Key player absent" if (existing_prediction.key_player_availability_score or 1.0) < 0.7 else None
+                    ] if w
                 ],
             }
 
-    fixture_context, features = await build_prediction_features(service, fixture_id)
-    artifact = get_latest_model_artifact(db, fixture_context.league_id)
-    artifact_payload = _artifact_payload(artifact.artifact_blob if artifact else None)
-    artifact_payload.setdefault("version", artifact.version if artifact else DEFAULT_ARTIFACT.get("version", "poisson-v1"))
+    # 3. Generate fresh prediction — costs exactly 1 API call
+    fixture_context = await get_fixture_context(service, fixture_id)
+    status = fixture_context.status
+    kickoff_at = fixture_context.kickoff_at
+
+    kickoff_utc = (
+        kickoff_at if kickoff_at and kickoff_at.tzinfo
+        else kickoff_at.replace(tzinfo=timezone.utc) if kickoff_at
+        else None
+    )
+    if kickoff_utc and kickoff_utc <= now and status.upper() not in ("HT", "NS"):
+        raise HTTPException(
+            status_code=409,
+            detail="Predictions are only available before kick-off or at half-time",
+        )
+
+    artifact_record = get_latest_model_artifact(db, fixture_context.league_id)
+    artifact = _artifact_payload(artifact_record.artifact_blob if artifact_record else None)
+    artifact.setdefault("version", artifact_record.version if artifact_record else DEFAULT_ARTIFACT.get("version", "dixon-coles-v1"))
 
     prediction = predict_outcome(
-        features,
-        artifact_blob=artifact_payload,
+        home_team_id=fixture_context.home_team_id,
+        away_team_id=fixture_context.away_team_id,
+        artifact=artifact,
         timestamp=now.isoformat(),
     )
+
     valid_until = _prediction_window(status, kickoff_at)
 
     upsert_match_record(
@@ -149,11 +158,6 @@ async def generate_prediction(
         raw_payload=fixture_context.raw_fixture,
     )
 
-    key_player_score = min(
-        features["home"]["key_player_availability_score"],
-        features["away"]["key_player_availability_score"],
-    )
-
     raw_output = {
         "most_likely_scoreline": prediction.most_likely_scoreline,
         "interval_width": prediction.interval_width,
@@ -169,32 +173,40 @@ async def generate_prediction(
         draw_probability=prediction.draw_probability,
         away_win_probability=prediction.away_win_probability,
         confidence=prediction.confidence,
-        key_player_availability_score=key_player_score,
+        key_player_availability_score=None,
         generated_at=now,
         valid_until=valid_until,
         model_version=prediction.model_version,
-        feature_payload=features,
+        feature_payload={
+            "home_team_id": fixture_context.home_team_id,
+            "away_team_id": fixture_context.away_team_id,
+            "model_version": prediction.model_version,
+        },
         raw_output=raw_output,
     )
     db.commit()
 
-    response = {
+    scoreline = (
+        f"{fixture_context.home_team_name} {prediction.most_likely_scoreline.split('-')[0]}"
+        f" - {prediction.most_likely_scoreline.split('-')[1]} {fixture_context.away_team_name}"
+    )
+    response: dict[str, Any] = {
         "fixture_id": fixture_context.fixture_id,
         "home_team": fixture_context.home_team_name,
         "away_team": fixture_context.away_team_name,
         "predicted_score": f"{prediction.predicted_home_goals:.2f}-{prediction.predicted_away_goals:.2f}",
-        "scoreline": f"{fixture_context.home_team_name} {prediction.most_likely_scoreline.split('-')[0]} - {prediction.most_likely_scoreline.split('-')[1]} {fixture_context.away_team_name}",
+        "scoreline": scoreline,
         "most_likely_scoreline": prediction.most_likely_scoreline,
         "home_win_probability": prediction.home_win_probability,
         "draw_probability": prediction.draw_probability,
         "away_win_probability": prediction.away_win_probability,
         "confidence": prediction.confidence,
-        "key_player_availability_score": key_player_score,
+        "key_player_availability_score": None,
         "timestamp": prediction.timestamp,
         "valid_until": valid_until.isoformat() if valid_until else None,
         "model_version": prediction.model_version,
-        "features": features,
-        "warnings": ["Key player absent"] if key_player_score < 0.7 else [],
+        "features": None,
+        "warnings": [],
     }
 
     if cache.client is not None:

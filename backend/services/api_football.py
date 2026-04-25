@@ -67,12 +67,14 @@ class APIFootballService:
                 self._raise_for_api_errors(payload)
                 return payload
         except httpx.HTTPStatusError as exc:
+            await self.rate_limiter.release()
             upstream_detail = exc.response.text or "API-Football request failed"
             raise HTTPException(
                 status_code=exc.response.status_code,
                 detail=upstream_detail,
             ) from exc
         except httpx.HTTPError as exc:
+            await self.rate_limiter.release()
             raise HTTPException(
                 status_code=502,
                 detail="Failed to reach API-Football",

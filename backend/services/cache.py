@@ -61,6 +61,11 @@ class RedisCache:
             return None
         return int(await self.client.incrby(key, amount))
 
+    async def decrement(self, key: str, amount: int = 1) -> int | None:
+        if self.client is None:
+            return None
+        return int(await self.client.decrby(key, amount))
+
     async def expire(self, key: str, ttl: int) -> bool:
         if self.client is None:
             return False
