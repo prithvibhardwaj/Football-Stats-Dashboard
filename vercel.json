@@ -1,6 +1,5 @@
 {
-  "buildCommand": "cd frontend && npm install && npm run build",
-  "outputDirectory": "frontend/dist",
+  "rootDirectory": "frontend",
   "rewrites": [
     {
       "source": "/((?!assets/|favicon.ico|mockServiceWorker.js).*)",
