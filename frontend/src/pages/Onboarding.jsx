@@ -1,4 +1,4 @@
-import { Search, ShieldCheck, Trophy } from "lucide-react";
+import { LogOut, Search, ShieldCheck, Trophy } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -13,6 +13,7 @@ import {
   saveOnboardingSelection,
   searchTeams,
 } from "../lib/onboarding";
+import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../store/useAuthStore";
 
 const EMPTY_SLOTS = [null, null, null];
@@ -101,10 +102,20 @@ function TeamSlot({
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const { user, setPinnedTeams } = useAuthStore(useShallow((state) => ({
+  const { user, setPinnedTeams, logout } = useAuthStore(useShallow((state) => ({
     user: state.user,
     setPinnedTeams: state.setPinnedTeams,
+    logout: state.logout,
   })));
+
+  async function handleSignOut() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    } else {
+      logout();
+      navigate("/login", { replace: true });
+    }
+  }
 
   const [selectedTeams, setSelectedTeams] = useState(EMPTY_SLOTS);
   const [searchQueries, setSearchQueries] = useState(["", "", ""]);
@@ -246,7 +257,18 @@ export default function Onboarding() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl items-center px-4 py-12">
+    <main className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-12">
+      <div className="flex justify-end pb-6">
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white transition hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-300"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
+      </div>
+      <div className="flex flex-1 items-center">
       <section className="grid w-full gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="panel p-8">
           <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--color-text-muted)]">Onboarding</p>
@@ -327,6 +349,7 @@ export default function Onboarding() {
           </section>
         </aside>
       </section>
+      </div>
     </main>
   );
 }

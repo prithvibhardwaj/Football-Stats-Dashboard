@@ -253,11 +253,12 @@ export async function searchTeams(query) {
 
   // Always fire the live API search in parallel with the catalog lookup so
   // results are available even if the catalog hasn't loaded yet.
+  let apiError = null;
   const [catalog, apiPayload] = await Promise.all([
     getFallbackTeamCatalog().catch(() => []),
     apiClient
       .get(`/api/teams?search=${encodeURIComponent(trimmedQuery)}`)
-      .catch(() => null),
+      .catch((err) => { apiError = err; return null; }),
   ]);
 
   const catalogMatches = catalog
@@ -274,6 +275,10 @@ export async function searchTeams(query) {
     ...catalogMatches,
     ...apiResults.filter((t) => !seen.has(t.id)),
   ];
+
+  if (merged.length === 0 && apiError) {
+    throw new Error("Could not reach the backend. Make sure VITE_API_BASE_URL points to a running server.");
+  }
 
   return merged.slice(0, 20);
 }
