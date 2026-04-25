@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/((?!assets/|favicon.ico|mockServiceWorker.js).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

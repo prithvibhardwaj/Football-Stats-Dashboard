@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #06131f;
+  --color-panel: #0d2233;
+  --color-panel-muted: #12324a;
+  --color-border: #214764;
+  --color-text: #e8f1f7;
+  --color-text-muted: #94adc3;
+  --color-accent: #f59e0b;
+  --color-success: #34d399;
+  --color-danger: #f87171;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply min-h-screen bg-[radial-gradient(circle_at_top,_rgba(245,158,11,0.14),_transparent_25%),linear-gradient(180deg,_#07131f_0%,_#081826_48%,_#050b12_100%)] text-[color:var(--color-text)] antialiased;
+  }
+
+  button,
+  input,
+  select {
+    @apply outline-none;
+  }
+}
+
+@layer utilities {
+  .panel {
+    @apply rounded-3xl border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/85 shadow-[0_20px_80px_rgba(0,0,0,0.28)] backdrop-blur;
+  }
+
+  .panel-muted {
+    @apply rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-panel-muted)]/70;
+  }
+}

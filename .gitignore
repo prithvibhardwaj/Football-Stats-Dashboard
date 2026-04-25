@@ -1,0 +1,24 @@
+# Secrets
+frontend/.env
+backend/.env
+.env
+.env.local
+.env.*.local
+
+# Dependencies and virtual environments
+frontend/node_modules/
+backend/.venv/
+
+# Build output
+frontend/dist/
+
+# Python cache and local state
+backend/__pycache__/
+backend/**/*.pyc
+backend/*.db
+backend/data/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
