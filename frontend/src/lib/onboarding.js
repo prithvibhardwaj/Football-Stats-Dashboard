@@ -229,6 +229,21 @@ function teamMatchesQuery(teamName, query) {
   return false;
 }
 
+function normalizeApiTeamResult(item) {
+  const team = item.team ?? item;
+  const league = item.league ?? null;
+  if (!team?.id) return null;
+  return {
+    id: team.id,
+    name: team.name,
+    logo: team.logo ?? null,
+    country: team.country ?? league?.country ?? "",
+    leagueId: league?.id ?? null,
+    leagueName: league?.name ?? "",
+    season: league?.season ?? null,
+  };
+}
+
 export async function searchTeams(query) {
   const trimmedQuery = query.trim();
 
@@ -236,47 +251,31 @@ export async function searchTeams(query) {
     return [];
   }
 
-  const catalog = await getFallbackTeamCatalog();
+  // Always fire the live API search in parallel with the catalog lookup so
+  // results are available even if the catalog hasn't loaded yet.
+  const [catalog, apiPayload] = await Promise.all([
+    getFallbackTeamCatalog().catch(() => []),
+    apiClient
+      .get(`/api/teams?search=${encodeURIComponent(trimmedQuery)}`)
+      .catch(() => null),
+  ]);
+
   const catalogMatches = catalog
     .filter((team) => teamMatchesQuery(team.name, trimmedQuery))
     .slice(0, 20);
 
-  if (catalogMatches.length) {
-    return catalogMatches;
-  }
+  const apiResults = Array.isArray(apiPayload?.response)
+    ? apiPayload.response.map(normalizeApiTeamResult).filter(Boolean)
+    : [];
 
-  try {
-    const payload = await apiClient.get(`/api/teams?search=${encodeURIComponent(trimmedQuery)}`);
-    const results = Array.isArray(payload?.response) ? payload.response : [];
-    const normalizedResults = results
-      .map((item) => {
-        const team = item.team ?? item;
-        const league = item.league ?? null;
+  // Merge: catalog matches first, then any API results not already present.
+  const seen = new Set(catalogMatches.map((t) => t.id));
+  const merged = [
+    ...catalogMatches,
+    ...apiResults.filter((t) => !seen.has(t.id)),
+  ];
 
-        if (!team?.id) {
-          return null;
-        }
-
-        return {
-          id: team.id,
-          name: team.name,
-          logo: team.logo ?? null,
-          country: team.country ?? league?.country ?? "",
-          leagueId: league?.id ?? null,
-          leagueName: league?.name ?? "",
-          season: league?.season ?? null,
-        };
-      })
-      .filter(Boolean);
-
-    if (normalizedResults.length) {
-      return normalizedResults;
-    }
-  } catch {
-    // Fall through to empty for free-tier compatibility.
-  }
-
-  return [];
+  return merged.slice(0, 20);
 }
 
 async function getFallbackTeamCatalog() {

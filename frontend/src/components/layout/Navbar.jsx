@@ -373,12 +373,17 @@ export default function Navbar({ isSidebarCollapsed = false, onToggleSidebar = (
 
         <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm text-white">
           <UserCircle2 className="h-4 w-4 text-[color:var(--color-accent)]" />
-          {user?.email ?? "Analyst"}
+          <span className="hidden sm:inline">{user?.email ?? "Analyst"}</span>
         </div>
-        <Button variant="ghost" className="gap-2" onClick={handleLogout} type="button">
+        <button
+          type="button"
+          onClick={handleLogout}
+          title="Sign out"
+          className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm text-white transition hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-300"
+        >
           <LogOut className="h-4 w-4" />
-          Logout
-        </Button>
+          <span className="hidden sm:inline">Sign out</span>
+        </button>
       </div>
 
       {isTeamSwitcherOpen ? (
