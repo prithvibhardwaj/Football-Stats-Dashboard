@@ -195,6 +195,40 @@ export function clearOnboardingDraft(userId) {
   removeStorageItem(getOnboardingDraftKey(userId));
 }
 
+const STRIP_PREFIXES = /^(fc|afc|cf|sc|ac|as|sd|rcd|cd|ud)\s+/i;
+const STRIP_SUFFIXES = /\s+(fc|afc|cf|sc|ac)$/i;
+
+function normalizeName(name) {
+  return name
+    .toLowerCase()
+    .replace(STRIP_PREFIXES, "")
+    .replace(STRIP_SUFFIXES, "")
+    .trim();
+}
+
+function teamMatchesQuery(teamName, query) {
+  const normalizedTeam = normalizeName(teamName);
+  const normalizedQuery = normalizeName(query);
+
+  if (normalizedTeam.includes(normalizedQuery) || normalizedQuery.includes(normalizedTeam)) {
+    return true;
+  }
+
+  // Word-level: every word in the query appears somewhere in the team name
+  const queryWords = normalizedQuery.split(/\s+/).filter((w) => w.length > 1);
+  if (queryWords.length > 0 && queryWords.every((word) => normalizedTeam.includes(word))) {
+    return true;
+  }
+
+  // Word-level reverse: every word in the team name appears in the query
+  const teamWords = normalizedTeam.split(/\s+/).filter((w) => w.length > 1);
+  if (teamWords.length > 0 && teamWords.every((word) => normalizedQuery.includes(word))) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function searchTeams(query) {
   const trimmedQuery = query.trim();
 
@@ -203,9 +237,8 @@ export async function searchTeams(query) {
   }
 
   const catalog = await getFallbackTeamCatalog();
-  const lowerQuery = trimmedQuery.toLowerCase();
   const catalogMatches = catalog
-    .filter((team) => team.name.toLowerCase().includes(lowerQuery))
+    .filter((team) => teamMatchesQuery(team.name, trimmedQuery))
     .slice(0, 20);
 
   if (catalogMatches.length) {
@@ -240,7 +273,7 @@ export async function searchTeams(query) {
       return normalizedResults;
     }
   } catch {
-    // Fall through to cached standings catalog for free-tier compatibility.
+    // Fall through to empty for free-tier compatibility.
   }
 
   return [];
